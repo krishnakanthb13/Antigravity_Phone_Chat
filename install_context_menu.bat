@@ -1,6 +1,8 @@
 @echo off
 title Antigravity - Context Menu Manager
 
+:menu
+cls
 echo ===================================================
 echo   Antigravity - Right-Click Context Menu Manager
 echo ===================================================
@@ -36,7 +38,7 @@ if "%choice%"=="4" goto backup
 if "%choice%"=="5" goto end
 echo [ERROR] Invalid choice.
 pause
-exit /b
+goto menu
 
 :backup
 echo.
@@ -51,7 +53,7 @@ if exist "%BACKUP_FILE%" (
 )
 echo.
 pause
-exit /b
+goto menu
 
 :install
 echo.
@@ -68,11 +70,8 @@ powershell -Command "Start-Process reg -ArgumentList 'add \"HKEY_CLASSES_ROOT\Di
 echo.
 echo [SUCCESS] Context menu installed!
 echo.
-echo You can now right-click any folder and select:
-echo   "Open with Antigravity (Debug)"
-echo.
 pause
-exit /b
+goto menu
 
 :restart
 echo.
@@ -82,7 +81,7 @@ start explorer.exe
 echo [SUCCESS] Explorer restarted.
 echo.
 pause
-exit /b
+goto menu
 
 :remove
 echo.
@@ -94,10 +93,8 @@ powershell -Command "Start-Process reg -ArgumentList 'delete \"HKEY_CLASSES_ROOT
 echo.
 echo [SUCCESS] Context menu removed!
 echo.
-echo The "Open with Antigravity (Debug)" option has been removed.
-echo.
 pause
-exit /b
+goto menu
 
 :end
 echo [EXIT] No changes made.
