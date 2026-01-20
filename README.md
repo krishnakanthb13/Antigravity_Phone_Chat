@@ -12,8 +12,7 @@
 
 ## 🚀 Quick Start
 
-> ⚠️ **Important: Follow These Steps in Order!**  
-> The sequence matters. Starting the server before Antigravity or without an active chat will cause connection failures.
+> 💡 **Tip:** While we recommend starting Antigravity first, the server is now smart enough to wait and automatically connect whenever Antigravity becomes available!
 
 ### Step 1: Launch Antigravity in Debug Mode
 
@@ -52,6 +51,7 @@ The script will:
 - Verify Node.js is installed
 - Install dependencies if missing
 - Auto-kill any existing server on port 3000
+- **Wait for Antigravity** if it's not started yet
 - Display your **exact IP Address** (e.g., `https://192.168.1.5:3000`)
 
 ### Step 4: Connect Your Phone

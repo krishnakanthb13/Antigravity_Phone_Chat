@@ -4,6 +4,33 @@ All notable changes to **Antigravity Phone Connect** are documented here, in rev
 
 ---
 
+## v0.1.7 - Robustness & Stability Update 🛡️
+**Release Date:** January 21, 2026
+
+---
+
+### ✨ Key Improvements
+
+#### 🔄 Smart Reconnection
+- **Auto-Recovery**: Server now automatically detects lost CDP connections (e.g., if you close/reopen VS Code) and reconnects without needing a restart.
+- **Resilient Startup**: You can now start the server *before* Antigravity. It will patiently poll ("🔍 Looking for Antigravity...") until it finds the debug port.
+- **Context Awareness**: Improved logic to track active execution contexts, preventing "stuck" snapshots when tabs are closed or refreshed.
+
+#### 🛠️ Frontend & Performance
+- **Client-Side Rendering**: Fixed a critical bug where the mobile client would hang on loading due to a syntax error in dynamic CSS injection.
+- **Optimized Capture**: Rewrote the CSS gathering logic to use array joining instead of string concatenation, improving performance on large chat histories.
+- **Syntax Fixes**: Corrected template literal escaping in the snapshot capture script (`\n` vs `\\n`) to prevent runtime evaluation errors.
+
+#### 🔍 Enhanced Diagnostics
+- **Throttled Logging**: Added intelligent logging that warns about common issues (like "cascade not found") only once every 10 seconds, preventing console spam.
+- **Actionable Tips**: Error messages now include helpful hints (e.g., "Tip: Ensure an active chat is open in Antigravity").
+
+#### 🐛 Bug Fixes
+- **Registry Path Handling**: Fixed `install_context_menu.bat` to correctly handle installation paths containing spaces (wrapping `%V` in quotes).
+- **Process Cleanup**: Improved the "Auto-Port Kill" feature to be more reliable on Windows.
+
+---
+
 ## v0.1.6 - Mobile Copy & Stability Improvements 📋
 **Release Date:** January 20, 2026
 
@@ -212,6 +239,7 @@ We are thrilled to announce the **first official release** of **Antigravity Phon
 
 ## 📝 Full Changelog
 
+- v0.1.7 - fix: Robust reconnection, app.js syntax, path escaping, enhanced logging
 - v0.1.6 - feat: Mobile copy button, auto port cleanup, scroll fix, docs update
 - v0.1.5 - feat: HTTPS support, scroll sync, bug fixes, SECURITY.md
 - v0.1.4 - feat: add scroll sync and SSL endpoints
