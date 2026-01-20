@@ -12,49 +12,53 @@
 
 ## 🚀 Quick Start
 
-### Windows
+> ⚠️ **Important: Follow These Steps in Order!**  
+> The sequence matters. Starting the server before Antigravity or without an active chat will cause connection failures.
 
-1.  **Double-click `start_ag_phone_connect.bat`**
-    The script will:
-    - Verify Node.js is installed.
-    - Automatically install dependencies (`npm install`) if they are missing.
-    - Detect SSL certificates and show `https://` or `http://` accordingly.
-    - Display your **exact IP Address** (e.g., `https://192.168.1.5:3000`).
-    - Provide tips for context menu setup and HTTPS enablement.
+### Step 1: Launch Antigravity in Debug Mode
 
-2.  **Connect Your Phone**
-    - Ensure your phone is on the **same Wi-Fi network** as your PC.
-    - Open your mobile browser and enter the **URL shown in the terminal**.
-    - If using HTTPS: Accept the self-signed certificate warning on first visit.
+Start Antigravity with the remote debugging port enabled:
 
-3.  **Launch Antigravity** (if not already running)
-    - **Recommended**: Run **`install_context_menu.bat`** and select **[1] Install**. Then, simply right-click any project folder and select **"Open with Antigravity (Debug)"**.
-    - Otherwise, run manually: `antigravity . --remote-debugging-port=9000`
+**Option A: Using Right-Click Context Menu (Recommended)**
+- Run `install_context_menu.bat` (Windows) or `./install_context_menu.sh` (Linux) and select **[1] Install**
+- Then right-click any project folder → **"Open with Antigravity (Debug)"**
 
----
+**Option B: Manual Command**
+```bash
+antigravity . --remote-debugging-port=9000
+```
 
-### macOS / Linux
+### Step 2: Open or Start a Chat
 
-1.  **Run the launcher script**
-    ```bash
-    chmod +x start_ag_phone_connect.sh
-    ./start_ag_phone_connect.sh
-    ```
-    The script will:
-    - Verify Node.js is installed.
-    - Automatically install dependencies.
-    - Detect SSL certificates and display the appropriate protocol.
-    - Display your **exact IP Address**.
-    - *(Linux only)* Provide tips for Nautilus/GNOME context menu management.
+- In Antigravity, open an **existing chat** from the bottom-right panel, **OR**
+- Start a **new chat** by typing a message
 
-2.  **Connect Your Phone**
-    - Ensure your phone is on the **same Wi-Fi network**.
-    - Open your mobile browser and enter the **URL shown in the terminal**.
+> 💡 The server needs an active chat session to capture snapshots. Without this, you'll see "cascade not found" errors.
 
-3.  **Launch Antigravity** (if not already running)
-    ```bash
-    antigravity . --remote-debugging-port=9000
-    ```
+### Step 3: Run the Server
+
+**Windows:**
+```
+Double-click start_ag_phone_connect.bat
+```
+
+**macOS / Linux:**
+```bash
+chmod +x start_ag_phone_connect.sh   # First time only
+./start_ag_phone_connect.sh
+```
+
+The script will:
+- Verify Node.js is installed
+- Install dependencies if missing
+- Auto-kill any existing server on port 3000
+- Display your **exact IP Address** (e.g., `https://192.168.1.5:3000`)
+
+### Step 4: Connect Your Phone
+
+1. Ensure your phone is on the **same Wi-Fi network** as your PC
+2. Open your mobile browser and enter the **URL shown in the terminal**
+3. If using HTTPS: Accept the self-signed certificate warning on first visit
 
 ---
 

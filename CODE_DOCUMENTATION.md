@@ -40,6 +40,7 @@ graph TD
 
 | Module/Function | Description |
 | :--- | :--- |
+| `killPortProcess()` | Automatically kills any existing process on the server port (prevents EADDRINUSE errors). Works on Windows/Linux/macOS. |
 | `getLocalIP()` | Detects local network IP address for mobile access display. |
 | `discoverCDP()` | Scans ports (9000-9003) to find the Antigravity instance. |
 | `connectCDP()` | Establishes CDP WebSocket with centralized message handling (prevents memory leaks). Uses `pendingCalls` Map with 30s timeout. |
@@ -48,6 +49,7 @@ graph TD
 | `injectMessage()` | Locates the Antigravity input field and simulates typing/submission. Uses `JSON.stringify` for safe escaping. |
 | `setMode()` / `setModel()` | Robust text-based selectors to change AI settings remotely. |
 | `clickElement()` | Relays a physical click from the phone to a specific element index on Desktop. |
+| `remoteScroll()` | Syncs phone scroll position to Desktop Antigravity chat. |
 | `getAppState()` | Syncs Mode/Model status by scraping the Desktop UI text nodes (detects clickable elements). |
 | `gracefulShutdown()` | Handles SIGINT/SIGTERM for clean server shutdown. |
 | `createServer()` | Creates Express app with automatic HTTP/HTTPS detection based on SSL cert availability. |
@@ -92,12 +94,37 @@ The server automatically detects SSL certificates and enables HTTPS:
 
 ## Execution Flow
 
-1. **Init**: `server.js` starts and attempts to discover a running Antigravity instance on local ports.
-2. **SSL Check**: Server checks for certificates in `./certs/` and enables HTTPS if found.
-3. **Polling**: Once connected, the server polls the UI every 1 second. If the content hash changes, it notifies clients via WebSocket.
-4. **Rendering**: The mobile client receives the notification, fetches the latest HTML/CSS snapshot, and renders it inside a sandboxed div.
-5. **Interaction**: User actions (Send, Stop, Change Model) are sent as HTTPS POST requests to the server, which converts them into CDP commands.
-6. **Shutdown**: On SIGINT/SIGTERM, server gracefully closes all connections before exit.
+> ⚠️ **The order of these steps matters!** Always start Antigravity with an active chat BEFORE running the server.
+
+### Required Startup Sequence:
+
+1. **Start Antigravity in Debug Mode**
+   - Launch Antigravity with: `antigravity . --remote-debugging-port=9000`
+   - Or use the context menu: Right-click folder → "Open with Antigravity (Debug)"
+
+2. **Open or Start a Chat**
+   - Open an existing chat from the bottom-right panel, OR
+   - Start a new chat by typing a message
+   - ⚠️ The server requires an active chat (the `#cascade` element) to capture snapshots
+
+3. **Run the Server** (`start_ag_phone_connect.bat` or `.sh`)
+   - **Port Cleanup**: Server automatically kills any existing process on port 3000
+   - **CDP Discovery**: Scans ports 9000-9003 to find the running Antigravity instance
+   - **SSL Check**: Checks for certificates in `./certs/` and enables HTTPS if found
+   - **Polling Starts**: Once connected, polls the UI every 1 second for changes
+
+4. **Connect Your Phone**
+   - Open the URL shown in terminal (e.g., `https://192.168.1.5:3000`)
+   - Accept SSL certificate warning on first visit
+   - Phone receives snapshots via WebSocket notifications
+
+### Runtime Behavior:
+
+- **Snapshot Updates**: If content hash changes, clients are notified via WebSocket
+- **Rendering**: Mobile client fetches latest HTML/CSS and renders in a sandboxed div
+- **Interaction**: User actions (Send, Stop, Mode/Model changes) are POST requests → CDP commands
+- **Scroll Sync**: Phone scroll position syncs to Desktop with user scroll lock protection
+- **Shutdown**: On SIGINT/SIGTERM, server gracefully closes all connections before exit
 
 ## Security Considerations
 
