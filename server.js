@@ -110,22 +110,32 @@ function getJson(url) {
 }
 
 // Find Antigravity CDP endpoint
+// Find Antigravity CDP endpoint
 async function discoverCDP() {
     const errors = [];
     for (const port of PORTS) {
         try {
             const list = await getJson(`http://127.0.0.1:${port}/json/list`);
-            // Look for workbench specifically (where #cascade exists, which has the chat) 
-            const found = list.find(t => t.url?.includes('workbench.html') || (t.title && t.title.includes('workbench')));
-            if (found && found.webSocketDebuggerUrl) {
-                return { port, url: found.webSocketDebuggerUrl };
+
+            // Priority 1: Standard Workbench (The main window)
+            const workbench = list.find(t => t.url?.includes('workbench.html') || (t.title && t.title.includes('workbench')));
+            if (workbench && workbench.webSocketDebuggerUrl) {
+                console.log('Found Workbench target:', workbench.title);
+                return { port, url: workbench.webSocketDebuggerUrl };
+            }
+
+            // Priority 2: Jetski/Launchpad (Fallback)
+            const jetski = list.find(t => t.url?.includes('jetski') || t.title === 'Launchpad');
+            if (jetski && jetski.webSocketDebuggerUrl) {
+                console.log('Found Jetski/Launchpad target:', jetski.title);
+                return { port, url: jetski.webSocketDebuggerUrl };
             }
         } catch (e) {
             errors.push(`${port}: ${e.message}`);
         }
     }
     const errorSummary = errors.length ? `Errors: ${errors.join(', ')}` : 'No ports responding';
-    throw new Error(`CDP not found on ports ${PORTS.join(',')}. ${errorSummary}. Is Antigravity started with --remote-debugging-port=9000?`);
+    throw new Error(`CDP not found. ${errorSummary}`);
 }
 
 // Connect to CDP
@@ -663,63 +673,387 @@ async function setModel(cdp, modelName) {
     return { error: 'Context failed' };
 }
 
+// Start New Chat - Click the + button at the TOP of the chat window (NOT the context/media + button)
+async function startNewChat(cdp) {
+    const EXP = `(async () => {
+        try {
+            // Priority 1: Exact selector from user (data-tooltip-id="new-conversation-tooltip")
+            const exactBtn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]');
+            if (exactBtn) {
+                exactBtn.click();
+                return { success: true, method: 'data-tooltip-id' };
+            }
+
+            // Fallback: Use previous heuristics
+            const allButtons = Array.from(document.querySelectorAll('button, [role="button"], a'));
+            
+            // Find all buttons with plus icons
+            const plusButtons = allButtons.filter(btn => {
+                if (btn.offsetParent === null) return false; // Skip hidden
+                const hasPlusIcon = btn.querySelector('svg.lucide-plus') || 
+                                   btn.querySelector('svg.lucide-square-plus') ||
+                                   btn.querySelector('svg[class*="plus"]');
+                return hasPlusIcon;
+            });
+            
+            // Filter only top buttons (toolbar area)
+            const topPlusButtons = plusButtons.filter(btn => {
+                const rect = btn.getBoundingClientRect();
+                return rect.top < 200;
+            });
+
+            if (topPlusButtons.length > 0) {
+                 topPlusButtons.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+                 topPlusButtons[0].click();
+                 return { success: true, method: 'filtered_top_plus', count: topPlusButtons.length };
+            }
+            
+            // Fallback: aria-label
+             const newChatBtn = allButtons.find(btn => {
+                const ariaLabel = btn.getAttribute('aria-label')?.toLowerCase() || '';
+                const title = btn.getAttribute('title')?.toLowerCase() || '';
+                return (ariaLabel.includes('new') || title.includes('new')) && btn.offsetParent !== null;
+            });
+            
+            if (newChatBtn) {
+                newChatBtn.click();
+                return { success: true, method: 'aria_label_new' };
+            }
+            
+            return { error: 'New chat button not found' };
+        } catch(e) {
+            return { error: e.toString() };
+        }
+    })()`;
+
+    for (const ctx of cdp.contexts) {
+        try {
+            const res = await cdp.call("Runtime.evaluate", {
+                expression: EXP,
+                returnByValue: true,
+                awaitPromise: true,
+                contextId: ctx.id
+            });
+            if (res.result?.value?.success) return res.result.value;
+        } catch (e) { }
+    }
+    return { error: 'Context failed' };
+}
+// Get Chat History - Click history button and scrape conversations
+async function getChatHistory(cdp) {
+    const EXP = `(async () => {
+        try {
+            const chats = [];
+
+             // Priority 1: Look for tooltip ID pattern (history/past/recent)
+            let historyBtn = document.querySelector('[data-tooltip-id*="history"], [data-tooltip-id*="past"], [data-tooltip-id*="recent"], [data-tooltip-id*="conversation-history"]');
+            
+            // Priority 2: Look for button ADJACENT to the new chat button
+            if (!historyBtn) {
+                const newChatBtn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]');
+                if (newChatBtn) {
+                    const parent = newChatBtn.parentElement;
+                    if (parent) {
+                        const siblings = Array.from(parent.children).filter(el => el !== newChatBtn);
+                        historyBtn = siblings.find(el => el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'button');
+                    }
+                }
+            }
+
+            // Fallback: Use previous heuristics (icon/aria-label)
+             if (!historyBtn) {
+                 const allButtons = Array.from(document.querySelectorAll('button, [role="button"], a[data-tooltip-id]'));
+                 for (const btn of allButtons) {
+                    if (btn.offsetParent === null) continue;
+                    const hasHistoryIcon = btn.querySelector('svg.lucide-clock') ||
+                                           btn.querySelector('svg.lucide-history') ||
+                                           btn.querySelector('svg.lucide-folder') ||
+                                           btn.querySelector('svg[class*="clock"]') ||
+                                           btn.querySelector('svg[class*="history"]');
+                    if (hasHistoryIcon) {
+                        historyBtn = btn;
+                        break;
+                    }
+                }
+            }
+            
+            if (historyBtn) {
+                historyBtn.click();
+                await new Promise(r => setTimeout(r, 600));
+                
+                const panels = Array.from(document.querySelectorAll(
+                    '[role="dialog"], [role="menu"], [class*="sidebar"], [class*="panel"], ' +
+                    '[class*="drawer"], [class*="popover"], [class*="dropdown"], [class*="history"]'
+                ));
+                
+                for (const panel of panels) {
+                    if (!panel.offsetParent) continue;
+                    
+                    const items = Array.from(panel.querySelectorAll('div, li, a, button, span'));
+                    const seenTitles = new Set();
+                    
+                    for (const item of items) {
+                        const text = item.innerText?.trim();
+                        if (!text || text.length < 3 || text.length > 200) continue;
+                        if (item.children.length > 3) continue;
+
+                        const lowerText = text.toLowerCase();
+                        if (lowerText === 'history' || lowerText === 'threads' ||
+                            lowerText === 'recent' || lowerText === 'new chat' || 
+                            lowerText.includes('setting') || lowerText === 'close' || 
+                            lowerText === 'cancel' || lowerText === 'search') continue;
+                        
+                        const style = window.getComputedStyle(item);
+                        const isClickable = style.cursor === 'pointer' || 
+                                           item.tagName === 'BUTTON' || 
+                                           item.tagName === 'A' ||
+                                           item.closest('[role="button"]');
+                        if (!isClickable) continue;
+                        
+                        const title = text.split('\\n')[0].trim();
+                        if (title && !seenTitles.has(title) && title.length > 2) {
+                            seenTitles.add(title);
+                            chats.push({
+                                title: title,
+                                index: chats.length
+                            });
+                            
+                            if (chats.length >= 20) break;
+                        }
+                    }
+                    
+                    if (chats.length > 0) break;
+                }
+                
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                
+                return { 
+                    success: true, 
+                    chats: chats, 
+                    historyBtnFound: true,
+                    method: 'found_history_btn'
+                };
+            }
+            
+            return { success: false, error: 'History button not found', chats: [] };
+        } catch(e) {
+            return { error: e.toString(), chats: [] };
+        }
+    })()`;
+
+    for (const ctx of cdp.contexts) {
+        try {
+            const res = await cdp.call("Runtime.evaluate", {
+                expression: EXP,
+                returnByValue: true,
+                awaitPromise: true,
+                contextId: ctx.id
+            });
+            if (res.result?.value) return res.result.value;
+        } catch (e) { }
+    }
+    return { error: 'Context failed', chats: [] };
+}
+async function selectChat(cdp, chatTitle) {
+    const safeChatTitle = JSON.stringify(chatTitle);
+
+    const EXP = `(async () => {
+    try {
+        const targetTitle = ${ safeChatTitle };
+
+        // First, we need to open the history panel
+        // Find the history button at the top (next to + button)
+        const allButtons = Array.from(document.querySelectorAll('button, [role="button"]'));
+
+        let historyBtn = null;
+
+        // Find by icon type
+        for (const btn of allButtons) {
+            if (btn.offsetParent === null) continue;
+            const hasHistoryIcon = btn.querySelector('svg.lucide-clock') ||
+                btn.querySelector('svg.lucide-history') ||
+                btn.querySelector('svg.lucide-folder') ||
+                btn.querySelector('svg.lucide-clock-rotate-left');
+            if (hasHistoryIcon) {
+                historyBtn = btn;
+                break;
+            }
+        }
+
+        // Fallback: Find by position (second button at top)
+        if (!historyBtn) {
+            const topButtons = allButtons.filter(btn => {
+                if (btn.offsetParent === null) return false;
+                const rect = btn.getBoundingClientRect();
+                return rect.top < 100 && rect.top > 0;
+            }).sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+
+            if (topButtons.length >= 2) {
+                historyBtn = topButtons[1];
+            }
+        }
+
+        if (historyBtn) {
+            historyBtn.click();
+            await new Promise(r => setTimeout(r, 600));
+        }
+
+        // Now find the chat by title in the opened panel
+        await new Promise(r => setTimeout(r, 200));
+
+        const allElements = Array.from(document.querySelectorAll('*'));
+
+        // Find elements matching the title
+        const candidates = allElements.filter(el => {
+            if (el.offsetParent === null) return false;
+            const text = el.innerText?.trim();
+            return text && text.startsWith(targetTitle.substring(0, Math.min(30, targetTitle.length)));
+        });
+
+        // Find the most specific (deepest) visible element with the title
+        let target = null;
+        let maxDepth = -1;
+
+        for (const el of candidates) {
+            // Skip if it has too many children (likely a container)
+            if (el.children.length > 5) continue;
+
+            let depth = 0;
+            let parent = el;
+            while (parent) {
+                depth++;
+                parent = parent.parentElement;
+            }
+
+            if (depth > maxDepth) {
+                maxDepth = depth;
+                target = el;
+            }
+        }
+
+        if (target) {
+            // Find clickable parent if needed
+            let clickable = target;
+            for (let i = 0; i < 5; i++) {
+                if (!clickable) break;
+                const style = window.getComputedStyle(clickable);
+                if (style.cursor === 'pointer' || clickable.tagName === 'BUTTON') {
+                    break;
+                }
+                clickable = clickable.parentElement;
+            }
+
+            if (clickable) {
+                clickable.click();
+                return { success: true, method: 'clickable_parent' };
+            }
+
+            target.click();
+            return { success: true, method: 'direct_click' };
+        }
+
+        return { error: 'Chat not found: ' + targetTitle };
+    } catch (e) {
+        return { error: e.toString() };
+    }
+})()`;
+
+    for (const ctx of cdp.contexts) {
+        try {
+            const res = await cdp.call("Runtime.evaluate", {
+                expression: EXP,
+                returnByValue: true,
+                awaitPromise: true,
+                contextId: ctx.id
+            });
+            if (res.result?.value) return res.result.value;
+        } catch (e) { }
+    }
+    return { error: 'Context failed' };
+}
+
+// Check if a chat is currently open (has cascade element)
+async function hasChatOpen(cdp) {
+    const EXP = `(() => {
+    const cascade = document.getElementById('cascade');
+    const hasMessages = cascade && cascade.querySelectorAll('[class*="message"], [data-message]').length > 0;
+    return {
+        hasChat: !!cascade,
+        hasMessages: hasMessages,
+        editorFound: !!document.querySelector('#cascade [data-lexical-editor="true"]')
+    };
+})()`;
+
+    for (const ctx of cdp.contexts) {
+        try {
+            const res = await cdp.call("Runtime.evaluate", {
+                expression: EXP,
+                returnByValue: true,
+                contextId: ctx.id
+            });
+            if (res.result?.value) return res.result.value;
+        } catch (e) { }
+    }
+    return { hasChat: false, hasMessages: false, editorFound: false };
+}
+
 // Get App State (Mode & Model)
 async function getAppState(cdp) {
     const EXP = `(async () => {
-        try {
-            const state = { mode: 'Unknown', model: 'Unknown' };
-            
-            // 1. Get Mode (Fast/Planning)
-            // Strategy: Find the clickable mode button which contains either "Fast" or "Planning"
-            // It's usually a button or div with cursor:pointer containing the mode text
-            const allEls = Array.from(document.querySelectorAll('*'));
-            
-            // Find elements that are likely mode buttons
-            for (const el of allEls) {
-                if (el.children.length > 0) continue;
-                const text = (el.innerText || '').trim();
-                if (text !== 'Fast' && text !== 'Planning') continue;
-                
-                // Check if this or a parent is clickable (the actual mode selector)
-                let current = el;
-                for (let i = 0; i < 5; i++) {
-                    if (!current) break;
-                    const style = window.getComputedStyle(current);
-                    if (style.cursor === 'pointer' || current.tagName === 'BUTTON') {
-                        state.mode = text;
-                        break;
-                    }
-                    current = current.parentElement;
-                }
-                if (state.mode !== 'Unknown') break;
-            }
-            
-            // Fallback: Just look for visible text
-            if (state.mode === 'Unknown') {
-                const textNodes = allEls.filter(el => el.children.length === 0 && el.innerText);
-                if (textNodes.some(el => el.innerText.trim() === 'Planning')) state.mode = 'Planning';
-                else if (textNodes.some(el => el.innerText.trim() === 'Fast')) state.mode = 'Fast';
-            }
+    try {
+        const state = { mode: 'Unknown', model: 'Unknown' };
 
-            // 2. Get Model
-            // Strategy: Look for button containing a known model keyword
-            const KNOWN_MODELS = ["Gemini", "Claude", "GPT"];
-            const textNodes = allEls.filter(el => el.children.length === 0 && el.innerText);
-            const modelEl = textNodes.find(el => {
-                const txt = el.innerText;
-                // Avoids "Select Model" placeholder if possible, but usually a model is selected
-                return KNOWN_MODELS.some(k => txt.includes(k)) && 
-                       // Check if it's near a chevron (likely values in the header)
-                       el.closest('button')?.querySelector('svg.lucide-chevron-up');
-            });
-            
-            if (modelEl) {
-                state.model = modelEl.innerText.trim();
+        // 1. Get Mode (Fast/Planning)
+        // Strategy: Find the clickable mode button which contains either "Fast" or "Planning"
+        // It's usually a button or div with cursor:pointer containing the mode text
+        const allEls = Array.from(document.querySelectorAll('*'));
+
+        // Find elements that are likely mode buttons
+        for (const el of allEls) {
+            if (el.children.length > 0) continue;
+            const text = (el.innerText || '').trim();
+            if (text !== 'Fast' && text !== 'Planning') continue;
+
+            // Check if this or a parent is clickable (the actual mode selector)
+            let current = el;
+            for (let i = 0; i < 5; i++) {
+                if (!current) break;
+                const style = window.getComputedStyle(current);
+                if (style.cursor === 'pointer' || current.tagName === 'BUTTON') {
+                    state.mode = text;
+                    break;
+                }
+                current = current.parentElement;
             }
-            
-            return state;
-        } catch(e) { return { error: e.toString() }; }
-    })()`;
+            if (state.mode !== 'Unknown') break;
+        }
+
+        // Fallback: Just look for visible text
+        if (state.mode === 'Unknown') {
+            const textNodes = allEls.filter(el => el.children.length === 0 && el.innerText);
+            if (textNodes.some(el => el.innerText.trim() === 'Planning')) state.mode = 'Planning';
+            else if (textNodes.some(el => el.innerText.trim() === 'Fast')) state.mode = 'Fast';
+        }
+
+        // 2. Get Model
+        // Strategy: Look for button containing a known model keyword
+        const KNOWN_MODELS = ["Gemini", "Claude", "GPT"];
+        const textNodes = allEls.filter(el => el.children.length === 0 && el.innerText);
+        const modelEl = textNodes.find(el => {
+            const txt = el.innerText;
+            // Avoids "Select Model" placeholder if possible, but usually a model is selected
+            return KNOWN_MODELS.some(k => txt.includes(k)) &&
+                // Check if it's near a chevron (likely values in the header)
+                el.closest('button')?.querySelector('svg.lucide-chevron-up');
+        });
+
+        if (modelEl) {
+            state.model = modelEl.innerText.trim();
+        }
+
+        return state;
+    } catch (e) { return { error: e.toString() }; }
+})()`;
 
     for (const ctx of cdp.contexts) {
         try {
@@ -774,11 +1108,11 @@ function isLocalRequest(req) {
 async function initCDP() {
     console.log('🔍 Discovering Antigravity CDP endpoint...');
     const cdpInfo = await discoverCDP();
-    console.log(`✅ Found Antigravity on port ${cdpInfo.port}`);
+    console.log(`✅ Found Antigravity on port ${ cdpInfo.port } `);
 
     console.log('🔌 Connecting to CDP...');
     cdpConnection = await connectCDP(cdpInfo.url);
-    console.log(`✅ Connected! Found ${cdpConnection.contexts.length} execution contexts\n`);
+    console.log(`✅ Connected! Found ${ cdpConnection.contexts.length } execution contexts\n`);
 }
 
 // Background polling
@@ -830,14 +1164,14 @@ async function startPolling(wss) {
                         }
                     });
 
-                    console.log(`📸 Snapshot updated (hash: ${hash})`);
+                    console.log(`📸 Snapshot updated(hash: ${ hash })`);
                 }
             } else {
                 // Snapshot is null or has error
                 const now = Date.now();
                 if (!lastErrorLog || now - lastErrorLog > 10000) {
                     const errorMsg = snapshot?.error || 'No valid snapshot captured (check contexts)';
-                    console.warn(`⚠️  Snapshot capture issue: ${errorMsg}`);
+                    console.warn(`⚠️  Snapshot capture issue: ${ errorMsg } `);
                     if (errorMsg === 'cascade not found') {
                         console.log('   (Tip: Ensure an active chat is open in Antigravity)');
                     }
@@ -1062,51 +1396,257 @@ async function createServer() {
         });
     });
 
-    // WebSocket connection with Auth check
-    wss.on('connection', (ws, req) => {
-        // Parse cookies from headers
-        const rawCookies = req.headers.cookie || '';
-        const parsedCookies = {};
-        rawCookies.split(';').forEach(c => {
-            const [k, v] = c.trim().split('=');
-            if (k && v) {
+    // UI Inspection endpoint - Returns all buttons as JSON for debugging
+    app.get('/ui-inspect', async (req, res) => {
+        if (!cdpConnection) return res.status(503).json({ error: 'CDP disconnected' });
+
+        const EXP = `(() => {
+    try {
+        // Safeguard for non-DOM contexts
+        if (typeof window === 'undefined' || typeof document === 'undefined') {
+            return { error: 'Non-DOM context' };
+        }
+
+        // Helper to get string class name safely (handles SVGAnimatedString)
+        function getCls(el) {
+            if (!el) return '';
+            if (typeof el.className === 'string') return el.className;
+            if (el.className && typeof el.className.baseVal === 'string') return el.className.baseVal;
+            return '';
+        }
+
+        // Helper to pierce Shadow DOM
+        function findAllElements(selector, root = document) {
+            let results = Array.from(root.querySelectorAll(selector));
+            const elements = root.querySelectorAll('*');
+            for (const el of elements) {
                 try {
-                    parsedCookies[k] = decodeURIComponent(v);
+                    if (el.shadowRoot) {
+                        results = results.concat(Array.from(el.shadowRoot.querySelectorAll(selector)));
+                    }
+                } catch (e) { }
+            }
+            return results;
+        }
+
+        // Get standard info
+        const url = window.location ? window.location.href : '';
+        const title = document.title || '';
+        const bodyLen = document.body ? document.body.innerHTML.length : 0;
+        const hasCascade = !!document.getElementById('cascade') || !!document.querySelector('.cascade');
+
+        // Scan for buttons
+        const allLucideElements = findAllElements('svg[class*="lucide"]').map(svg => {
+            const parent = svg.closest('button, [role="button"], div, span, a');
+            if (!parent || parent.offsetParent === null) return null;
+            const rect = parent.getBoundingClientRect();
+            return {
+                type: 'lucide-icon',
+                tag: parent.tagName.toLowerCase(),
+                x: Math.round(rect.left),
+                y: Math.round(rect.top),
+                svgClasses: getCls(svg),
+                className: getCls(parent).substring(0, 100),
+                ariaLabel: parent.getAttribute('aria-label') || '',
+                title: parent.getAttribute('title') || '',
+                parentText: (parent.innerText || '').trim().substring(0, 50)
+            };
+        }).filter(Boolean);
+
+        const buttons = findAllElements('button, [role="button"]').map((btn, i) => {
+            const rect = btn.getBoundingClientRect();
+            const svg = btn.querySelector('svg');
+
+            return {
+                type: 'button',
+                index: i,
+                x: Math.round(rect.left),
+                y: Math.round(rect.top),
+                text: (btn.innerText || '').trim().substring(0, 50) || '(empty)',
+                ariaLabel: btn.getAttribute('aria-label') || '',
+                title: btn.getAttribute('title') || '',
+                svgClasses: getCls(svg),
+                className: getCls(btn).substring(0, 100),
+                visible: btn.offsetParent !== null
+            };
+        }).filter(b => b.visible);
+
+        return {
+            url, title, bodyLen, hasCascade,
+            buttons, lucideIcons: allLucideElements
+        };
+    } catch (err) {
+        return { error: err.toString(), stack: err.stack };
+    }
+})()`;
+
+        try {
+            // 1. Get Frames
+            const { frameTree } = await cdpConnection.call("Page.getFrameTree");
+            function flattenFrames(node) {
+                let list = [{
+                    id: node.frame.id,
+                    url: node.frame.url,
+                    name: node.frame.name,
+                    parentId: node.frame.parentId
+                }];
+                if (node.childFrames) {
+                    for (const child of node.childFrames) list = list.concat(flattenFrames(child));
+                }
+                return list;
+            }
+            const allFrames = flattenFrames(frameTree);
+
+            // 2. Map Contexts
+            const contexts = cdpConnection.contexts.map(c => ({
+                id: c.id,
+                name: c.name,
+                origin: c.origin,
+                frameId: c.auxData ? c.auxData.frameId : null,
+                isDefault: c.auxData ? c.auxData.isDefault : false
+            }));
+
+            // 3. Scan ALL Contexts
+            const contextResults = [];
+            for (const ctx of contexts) {
+                try {
+                    const result = await cdpConnection.call("Runtime.evaluate", {
+                        expression: EXP,
+                        returnByValue: true,
+                        contextId: ctx.id
+                    });
+
+                    if (result.result?.value) {
+                        const val = result.result.value;
+                        contextResults.push({
+                            contextId: ctx.id,
+                            frameId: ctx.frameId,
+                            url: val.url,
+                            title: val.title,
+                            hasCascade: val.hasCascade,
+                            buttonCount: val.buttons.length,
+                            lucideCount: val.lucideIcons.length,
+                            buttons: val.buttons, // Store buttons for analysis
+                            lucideIcons: val.lucideIcons
+                        });
+                    } else if (result.exceptionDetails) {
+                        contextResults.push({
+                            contextId: ctx.id,
+                            frameId: ctx.frameId,
+                            error: `Script Exception: ${ result.exceptionDetails.text } ${ result.exceptionDetails.exception?.description || '' } `
+                        });
+                    } else {
+                        contextResults.push({
+                            contextId: ctx.id,
+                            frameId: ctx.frameId,
+                            error: 'No value returned (undefined)'
+                        });
+                    }
                 } catch (e) {
-                    parsedCookies[k] = v;
+                    contextResults.push({ contextId: ctx.id, error: e.message });
                 }
             }
-        });
 
-        // Verify signed cookie manually
-        const signedToken = parsedCookies[AUTH_COOKIE_NAME];
-        let isAuthenticated = false;
+            // 4. Match and Analyze
+            const cascadeFrame = allFrames.find(f => f.url.includes('cascade'));
+            const matchingContext = contextResults.find(c => c.frameId === cascadeFrame?.id);
+            const contentContext = contextResults.sort((a, b) => (b.buttonCount || 0) - (a.buttonCount || 0))[0];
 
-        // Exempt local Wi-Fi devices from authentication
-        if (isLocalRequest(req)) {
-            isAuthenticated = true;
-        } else if (signedToken) {
-            const token = cookieParser.signedCookie(signedToken, 'antigravity_secret_key_1337');
-            if (token === AUTH_TOKEN) {
-                isAuthenticated = true;
-            }
+            // Prepare "useful buttons" from the best context
+            const bestContext = matchingContext || contentContext;
+            const usefulButtons = bestContext ? (bestContext.buttons || []).filter(b =>
+                b.ariaLabel?.includes('New Conversation') ||
+                b.title?.includes('New Conversation') ||
+                b.ariaLabel?.includes('Past Conversations') ||
+                b.title?.includes('Past Conversations') ||
+                b.ariaLabel?.includes('History')
+            ) : [];
+
+            res.json({
+                summary: {
+                    frameFound: !!cascadeFrame,
+                    cascadeFrameId: cascadeFrame?.id,
+                    contextFound: !!matchingContext,
+                    bestContextId: bestContext?.contextId
+                },
+                frames: allFrames,
+                contexts: contexts,
+                scanResults: contextResults.map(c => ({
+                    id: c.contextId,
+                    frameId: c.frameId,
+                    url: c.url,
+                    hasCascade: c.hasCascade,
+                    buttons: c.buttonCount,
+                    error: c.error
+                })),
+                usefulButtons: usefulButtons,
+                bestContextData: bestContext // Full data for the best context
+            });
+
+        } catch (e) {
+            res.status(500).json({ error: e.message, stack: e.stack });
         }
-
-        if (!isAuthenticated) {
-            console.log('🚫 Unauthorized WebSocket connection attempt');
-            ws.send(JSON.stringify({ type: 'error', message: 'Unauthorized' }));
-            setTimeout(() => ws.close(), 100);
-            return;
-        }
-
-        console.log('📱 Client connected (Authenticated)');
-
-        ws.on('close', () => {
-            console.log('📱 Client disconnected');
-        });
     });
 
-    return { server, wss, app, hasSSL };
+    // Endpoint to list all CDP targets - helpful for debugging connection issues
+    app.get('/cdp-targets', async (req, res) => {
+        const results = {};
+        for (const port of PORTS) {
+            try {
+                const list = await getJson(`http://127.0.0.1:${port}/json/list`);
+results[port] = list;
+            } catch (e) {
+    results[port] = e.message;
+}
+        }
+res.json(results);
+    });
+
+// WebSocket connection with Auth check
+wss.on('connection', (ws, req) => {
+    // Parse cookies from headers
+    const rawCookies = req.headers.cookie || '';
+    const parsedCookies = {};
+    rawCookies.split(';').forEach(c => {
+        const [k, v] = c.trim().split('=');
+        if (k && v) {
+            try {
+                parsedCookies[k] = decodeURIComponent(v);
+            } catch (e) {
+                parsedCookies[k] = v;
+            }
+        }
+    });
+
+    // Verify signed cookie manually
+    const signedToken = parsedCookies[AUTH_COOKIE_NAME];
+    let isAuthenticated = false;
+
+    // Exempt local Wi-Fi devices from authentication
+    if (isLocalRequest(req)) {
+        isAuthenticated = true;
+    } else if (signedToken) {
+        const token = cookieParser.signedCookie(signedToken, 'antigravity_secret_key_1337');
+        if (token === AUTH_TOKEN) {
+            isAuthenticated = true;
+        }
+    }
+
+    if (!isAuthenticated) {
+        console.log('🚫 Unauthorized WebSocket connection attempt');
+        ws.send(JSON.stringify({ type: 'error', message: 'Unauthorized' }));
+        setTimeout(() => ws.close(), 100);
+        return;
+    }
+
+    console.log('📱 Client connected (Authenticated)');
+
+    ws.on('close', () => {
+        console.log('📱 Client disconnected');
+    });
+});
+
+return { server, wss, app, hasSSL };
 }
 
 // Main
@@ -1144,6 +1684,36 @@ async function main() {
         app.get('/app-state', async (req, res) => {
             if (!cdpConnection) return res.json({ mode: 'Unknown', model: 'Unknown' });
             const result = await getAppState(cdpConnection);
+            res.json(result);
+        });
+
+        // Start New Chat
+        app.post('/new-chat', async (req, res) => {
+            if (!cdpConnection) return res.status(503).json({ error: 'CDP disconnected' });
+            const result = await startNewChat(cdpConnection);
+            res.json(result);
+        });
+
+        // Get Chat History
+        app.get('/chat-history', async (req, res) => {
+            if (!cdpConnection) return res.json({ error: 'CDP disconnected', chats: [] });
+            const result = await getChatHistory(cdpConnection);
+            res.json(result);
+        });
+
+        // Select a Chat
+        app.post('/select-chat', async (req, res) => {
+            const { title } = req.body;
+            if (!title) return res.status(400).json({ error: 'Chat title required' });
+            if (!cdpConnection) return res.status(503).json({ error: 'CDP disconnected' });
+            const result = await selectChat(cdpConnection, title);
+            res.json(result);
+        });
+
+        // Check if Chat is Open
+        app.get('/chat-status', async (req, res) => {
+            if (!cdpConnection) return res.json({ hasChat: false, hasMessages: false, editorFound: false });
+            const result = await hasChatOpen(cdpConnection);
             res.json(result);
         });
 

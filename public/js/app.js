@@ -8,6 +8,8 @@ const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const refreshBtn = document.getElementById('refreshBtn');
 const stopBtn = document.getElementById('stopBtn');
+const newChatBtn = document.getElementById('newChatBtn');
+const historyBtn = document.getElementById('historyBtn');
 
 const modeBtn = document.getElementById('modeBtn');
 const modelBtn = document.getElementById('modelBtn');
@@ -26,6 +28,8 @@ let ws = null;
 let idleTimer = null;
 let lastHash = '';
 let currentMode = 'Fast';
+let chatIsOpen = true; // Track if a chat is currently open
+
 
 // --- Auth Utilities ---
 async function fetchWithAuth(url, options = {}) {
@@ -177,9 +181,17 @@ async function loadSnapshot() {
 
         const response = await fetchWithAuth('/snapshot');
         if (!response.ok) {
-            if (response.status === 503) return;
+            if (response.status === 503) {
+                // No snapshot available - likely no chat open
+                chatIsOpen = false;
+                showEmptyState();
+                return;
+            }
             throw new Error('Failed to load');
         }
+
+        // Mark chat as open since we got a valid snapshot
+        chatIsOpen = true;
 
         const data = await response.json();
 
@@ -562,6 +574,17 @@ async function sendMessage() {
     sendBtn.style.opacity = '0.5';
 
     try {
+        // If no chat is open, start a new one first
+        if (!chatIsOpen) {
+            const newChatRes = await fetchWithAuth('/new-chat', { method: 'POST' });
+            const newChatData = await newChatRes.json();
+            if (newChatData.success) {
+                // Wait for the new chat to be ready
+                await new Promise(r => setTimeout(r, 800));
+                chatIsOpen = true;
+            }
+        }
+
         const res = await fetchWithAuth('/send', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -571,6 +594,7 @@ async function sendMessage() {
         // Always reload snapshot to check if message appeared
         setTimeout(loadSnapshot, 300);
         setTimeout(loadSnapshot, 800);
+        setTimeout(checkChatStatus, 1000);
 
         // Don't revert the input - if user sees the message in chat, it was sent
         // Only log errors for debugging, don't show alert popups
@@ -695,9 +719,183 @@ stopBtn.addEventListener('click', async () => {
     setTimeout(() => stopBtn.style.opacity = '1', 500);
 });
 
+// --- New Chat Logic ---
+async function startNewChat() {
+    newChatBtn.style.opacity = '0.5';
+    newChatBtn.style.pointerEvents = 'none';
 
+    try {
+        const res = await fetchWithAuth('/new-chat', { method: 'POST' });
+        const data = await res.json();
+
+        if (data.success) {
+            // Reload snapshot to show new empty chat
+            setTimeout(loadSnapshot, 500);
+            setTimeout(loadSnapshot, 1000);
+            setTimeout(checkChatStatus, 1500);
+        } else {
+            console.error('Failed to start new chat:', data.error);
+        }
+    } catch (e) {
+        console.error('New chat error:', e);
+    }
+
+    setTimeout(() => {
+        newChatBtn.style.opacity = '1';
+        newChatBtn.style.pointerEvents = 'auto';
+    }, 500);
+}
+
+newChatBtn.addEventListener('click', startNewChat);
+
+// --- Chat History Logic ---
+async function showChatHistory() {
+    historyBtn.style.opacity = '0.5';
+
+    try {
+        const res = await fetchWithAuth('/chat-history');
+        const data = await res.json();
+
+        modalTitle.textContent = 'Past Conversations';
+        modalList.innerHTML = '';
+
+        if (data.chats && data.chats.length > 0) {
+            // Add "New Chat" option at the top
+            const newChatDiv = document.createElement('div');
+            newChatDiv.className = 'history-item';
+            newChatDiv.innerHTML = `
+                <div class="history-item-icon" style="background: linear-gradient(135deg, #3b82f6, #2563eb);">
+                    <svg viewBox="0 0 24 24" style="stroke: white;">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                    </svg>
+                </div>
+                <div class="history-item-text">
+                    <div class="history-item-title" style="color: var(--accent);">Start New Conversation</div>
+                </div>
+            `;
+            newChatDiv.onclick = () => {
+                closeModal();
+                startNewChat();
+            };
+            modalList.appendChild(newChatDiv);
+
+            // Add chat history items
+            data.chats.forEach(chat => {
+                const div = document.createElement('div');
+                div.className = 'history-item';
+                div.innerHTML = `
+                    <div class="history-item-icon">
+                        <svg viewBox="0 0 24 24">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                    </div>
+                    <div class="history-item-text">
+                        <div class="history-item-title">${escapeHtml(chat.title)}</div>
+                    </div>
+                `;
+                div.onclick = async () => {
+                    closeModal();
+                    await selectChat(chat.title);
+                };
+                modalList.appendChild(div);
+            });
+        } else {
+            modalList.innerHTML = `
+                <div class="history-empty">
+                    <p>No past conversations found.</p>
+                    <button class="empty-state-btn" onclick="closeModal(); startNewChat();">
+                        Start New Conversation
+                    </button>
+                </div>
+            `;
+        }
+
+        // Add cancel button
+        const cancelDiv = document.createElement('div');
+        cancelDiv.style.cssText = 'margin-top:20px; text-align:center;';
+        cancelDiv.innerHTML = `
+            <button onclick="closeModal()" 
+                style="background:transparent; border:none; color:var(--text-muted); padding:10px;">
+                Cancel
+            </button>
+        `;
+        modalList.appendChild(cancelDiv);
+
+        modalOverlay.classList.add('show');
+    } catch (e) {
+        console.error('Failed to load chat history:', e);
+    }
+
+    setTimeout(() => historyBtn.style.opacity = '1', 300);
+}
+
+historyBtn.addEventListener('click', showChatHistory);
+
+// --- Select Chat from History ---
+async function selectChat(title) {
+    try {
+        const res = await fetchWithAuth('/select-chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            setTimeout(loadSnapshot, 300);
+            setTimeout(loadSnapshot, 800);
+            setTimeout(checkChatStatus, 1000);
+        } else {
+            console.error('Failed to select chat:', data.error);
+        }
+    } catch (e) {
+        console.error('Select chat error:', e);
+    }
+}
+
+// --- Check Chat Status ---
+async function checkChatStatus() {
+    try {
+        const res = await fetchWithAuth('/chat-status');
+        const data = await res.json();
+
+        chatIsOpen = data.hasChat || data.editorFound;
+
+        if (!chatIsOpen) {
+            showEmptyState();
+        }
+    } catch (e) {
+        console.error('Chat status check failed:', e);
+    }
+}
+
+// --- Empty State (No Chat Open) ---
+function showEmptyState() {
+    chatContent.innerHTML = `
+        <div class="empty-state">
+            <svg class="empty-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                <line x1="9" y1="10" x2="15" y2="10"></line>
+            </svg>
+            <h2>No Chat Open</h2>
+            <p>Start a new conversation or select one from your history to begin chatting.</p>
+            <button class="empty-state-btn" onclick="startNewChat()">
+                Start New Conversation
+            </button>
+        </div>
+    `;
+}
+
+// --- Utility: Escape HTML ---
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
 
 // --- Settings Logic ---
+
 
 function openModal(title, options, onSelect) {
     modalTitle.textContent = title;
@@ -844,3 +1042,7 @@ connectWebSocket();
 // Sync state initially and every 5 seconds to keep phone in sync with desktop changes
 fetchAppState();
 setInterval(fetchAppState, 5000);
+
+// Check chat status initially and periodically
+checkChatStatus();
+setInterval(checkChatStatus, 10000); // Check every 10 seconds
