@@ -32,7 +32,7 @@ antigravity . --remote-debugging-port=9000
 - In Antigravity, open an **existing chat** from the bottom-right panel, **OR**
 - Start a **new chat** by typing a message
 
-> 💡 The server needs an active chat session to capture snapshots. Without this, you'll see "cascade not found" errors.
+> 💡 The server needs an active chat session to capture snapshots. Without this, you'll see "chat container not found" errors.
 
 ### Step 3: Run the Server
 

@@ -1,10 +1,10 @@
 export async function inspectUI(cdp) {
     const INSPECT_SCRIPT = `(() => {
         // Find the input container (same logic as capture, but looking for what we essentially removed)
-        const cascade = document.getElementById('cascade');
-        if (!cascade) return 'No cascade found';
+        const cascade = document.getElementById('conversation') || document.getElementById('chat') || document.getElementById('cascade');
+        if (!cascade) return 'No chat container found';
 
-        const inputContainer = document.querySelector('[contenteditable="true"]')?.closest('div[id^="cascade"] > div');
+        const inputContainer = document.querySelector('[contenteditable="true"]')?.closest('div[id^="conversation"], div[id^="chat"], div[id^="cascade"]')?.parentElement;
         if (!inputContainer) return 'No input container found';
 
         // Helper to serialize simple version of DOM
@@ -49,7 +49,7 @@ export async function inspectUI(cdp) {
             if (result.result && result.result.value) {
                 return result.result.value;
             }
-        } catch (e) {}
+        } catch (e) { }
     }
     return 'Failed to inspect';
 }

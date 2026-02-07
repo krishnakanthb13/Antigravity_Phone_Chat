@@ -230,7 +230,7 @@ async function loadSnapshot() {
             '    --border-color: #334155;\n' +
             '}\n' +
             '\n' +
-            '#cascade {\n' +
+            '#conversation, #chat, #cascade {\n' +
             '    background-color: transparent !important;\n' +
             '    color: var(--text-main) !important;\n' +
             '    font-family: \'Inter\', system-ui, sans-serif !important;\n' +
@@ -239,15 +239,15 @@ async function loadSnapshot() {
             '    width: 100% !important;\n' +
             '}\n' +
             '\n' +
-            '#cascade * {\n' +
+            '#conversation *, #chat *, #cascade * {\n' +
             '    position: static !important;\n' +
             '}\n' +
             '\n' +
-            '#cascade p, #cascade h1, #cascade h2, #cascade h3, #cascade h4, #cascade h5, #cascade span, #cascade div, #cascade li {\n' +
+            '#conversation p, #chat p, #cascade p, #conversation h1, #chat h1, #cascade h1, #conversation h2, #chat h2, #cascade h2, #conversation h3, #chat h3, #cascade h3, #conversation h4, #chat h4, #cascade h4, #conversation h5, #chat h5, #cascade h5, #conversation span, #chat span, #cascade span, #conversation div, #chat div, #cascade div, #conversation li, #chat li, #cascade li {\n' +
             '    color: inherit !important;\n' +
             '}\n' +
             '\n' +
-            '#cascade a {\n' +
+            '#conversation a, #chat a, #cascade a {\n' +
             '    color: #60a5fa !important;\n' +
             '    text-decoration: underline;\n' +
             '}\n' +

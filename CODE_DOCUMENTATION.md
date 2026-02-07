@@ -140,7 +140,7 @@ The server automatically detects SSL certificates and enables HTTPS:
 2. **Open or Start a Chat**
    - Open an existing chat from the bottom-right panel, OR
    - Start a new chat by typing a message
-   - ⚠️ The server requires an active chat (the `#cascade` element) to capture snapshots
+      - ⚠️ The server requires an active chat (the `#conversation` or `#cascade` element) to capture snapshots
 
 3. **Run the Server** (`start_ag_phone_connect.bat` or `.sh`)
    - **Port Cleanup**: Server automatically kills any existing process on port 3000

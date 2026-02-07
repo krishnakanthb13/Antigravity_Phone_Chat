@@ -203,12 +203,12 @@ async function connectCDP(url) {
 // Capture chat snapshot
 async function captureSnapshot(cdp) {
     const CAPTURE_SCRIPT = `(() => {
-        const cascade = document.getElementById('cascade');
+        const cascade = document.getElementById('conversation') || document.getElementById('chat') || document.getElementById('cascade');
         if (!cascade) {
             // Debug info
             const body = document.body;
             const childIds = Array.from(body.children).map(c => c.id).filter(id => id).join(', ');
-            return { error: 'cascade not found', debug: { hasBody: !!body, availableIds: childIds } };
+            return { error: 'chat container not found', debug: { hasBody: !!body, availableIds: childIds } };
         }
         
         const cascadeStyles = window.getComputedStyle(cascade);
@@ -226,9 +226,9 @@ async function captureSnapshot(cdp) {
         const clone = cascade.cloneNode(true);
         
         // Remove the input box / chat window (last direct child div containing contenteditable)
-        const inputContainer = clone.querySelector('[contenteditable="true"]')?.closest('div[id^="cascade"] > div');
+        const inputContainer = clone.querySelector('[contenteditable="true"]')?.closest('div[id^="conversation"], div[id^="chat"], div[id^="cascade"]')?.parentElement;
         if (inputContainer) {
-            inputContainer.remove();
+            // inputContainer.remove(); // Be careful removing, maybe just hide it
         }
         
         const html = clone.outerHTML;
@@ -298,7 +298,7 @@ async function injectMessage(cdp, text) {
         const cancel = document.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
         if (cancel && cancel.offsetParent !== null) return { ok:false, reason:"busy" };
 
-        const editors = [...document.querySelectorAll('#cascade [data-lexical-editor="true"][contenteditable="true"][role="textbox"]')]
+        const editors = [...document.querySelectorAll('#conversation [contenteditable="true"], #chat [contenteditable="true"], #cascade [contenteditable="true"]')]
             .filter(el => el.offsetParent !== null);
         const editor = editors.at(-1);
         if (!editor) return { ok:false, error:"editor_not_found" };
@@ -530,16 +530,16 @@ async function remoteScroll(cdp, { scrollTop, scrollPercent }) {
     const EXPRESSION = `(async () => {
         try {
             // Find the main scrollable chat container
-            const scrollables = [...document.querySelectorAll('#cascade [class*="scroll"], #cascade [style*="overflow"]')]
+            const scrollables = [...document.querySelectorAll('#conversation [class*="scroll"], #chat [class*="scroll"], #cascade [class*="scroll"], #conversation [style*="overflow"], #chat [style*="overflow"], #cascade [style*="overflow"]')]
                 .filter(el => el.scrollHeight > el.clientHeight);
             
             // Also check for the main chat area
-            const chatArea = document.querySelector('#cascade .overflow-y-auto, #cascade [data-scroll-area]');
+            const chatArea = document.querySelector('#conversation .overflow-y-auto, #chat .overflow-y-auto, #cascade .overflow-y-auto, #conversation [data-scroll-area], #chat [data-scroll-area], #cascade [data-scroll-area]');
             if (chatArea) scrollables.unshift(chatArea);
             
             if (scrollables.length === 0) {
-                // Fallback: scroll the main cascade element
-                const cascade = document.querySelector('#cascade');
+                // Fallback: scroll the main container element
+                const cascade = document.getElementById('conversation') || document.getElementById('chat') || document.getElementById('cascade');
                 if (cascade && cascade.scrollHeight > cascade.clientHeight) {
                     scrollables.push(cascade);
                 }
@@ -1092,12 +1092,12 @@ async function selectChat(cdp, chatTitle) {
 // Check if a chat is currently open (has cascade element)
 async function hasChatOpen(cdp) {
     const EXP = `(() => {
-    const cascade = document.getElementById('cascade');
-    const hasMessages = cascade && cascade.querySelectorAll('[class*="message"], [data-message]').length > 0;
+    const chatContainer = document.getElementById('conversation') || document.getElementById('chat') || document.getElementById('cascade');
+    const hasMessages = chatContainer && chatContainer.querySelectorAll('[class*="message"], [data-message]').length > 0;
     return {
-        hasChat: !!cascade,
+        hasChat: !!chatContainer,
         hasMessages: hasMessages,
-        editorFound: !!document.querySelector('#cascade [data-lexical-editor="true"]')
+        editorFound: !!(chatContainer && chatContainer.querySelector('[data-lexical-editor="true"]'))
     };
 })()`;
 
@@ -1289,7 +1289,7 @@ async function startPolling(wss) {
                 if (!lastErrorLog || now - lastErrorLog > 10000) {
                     const errorMsg = snapshot?.error || 'No valid snapshot captured (check contexts)';
                     console.warn(`⚠️  Snapshot capture issue: ${errorMsg} `);
-                    if (errorMsg === 'cascade not found') {
+                    if (errorMsg.includes('container not found')) {
                         console.log('   (Tip: Ensure an active chat is open in Antigravity)');
                     }
                     if (cdpConnection.contexts.length === 0) {
