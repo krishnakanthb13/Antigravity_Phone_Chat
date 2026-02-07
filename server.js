@@ -926,7 +926,7 @@ async function getChatHistory(cdp) {
                         }
                     }
                 }
-                }
+                
                 // Fallback if loop finishes without specific break
                 if (!panel && startElement) {
                      // Just go up 4 levels
@@ -981,8 +981,7 @@ async function getChatHistory(cdp) {
                 }
             }
             
-            // Cleanup: Close the panel
-            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+            // Note: Panel is left open on PC as requested ("launch history on pc")
 
             return { success: true, chats: chats, debug: debugInfo };
         } catch(e) {
