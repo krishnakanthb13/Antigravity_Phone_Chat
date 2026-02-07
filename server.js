@@ -225,11 +225,51 @@ async function captureSnapshot(cdp) {
         // Clone cascade to modify it without affecting the original
         const clone = cascade.cloneNode(true);
         
-        // Remove the input box / chat window (last direct child div containing contenteditable)
-        const inputContainer = clone.querySelector('[contenteditable="true"]')?.closest('div[id^="conversation"], div[id^="chat"], div[id^="cascade"]')?.parentElement;
-        if (inputContainer) {
-            // inputContainer.remove(); // Be careful removing, maybe just hide it
-        }
+        // Aggressively remove the entire interaction/input/review area
+        try {
+            // 1. Identify common interaction wrappers by class combinations
+            const interactionSelectors = [
+                '.relative.flex.flex-col.gap-8',
+                '.flex.grow.flex-col.justify-start.gap-8',
+                'div[class*="interaction-area"]',
+                '.p-1.bg-gray-500\\/10',
+                '.outline-solid.justify-between',
+                '[contenteditable="true"]'
+            ];
+
+            interactionSelectors.forEach(selector => {
+                clone.querySelectorAll(selector).forEach(el => {
+                    try {
+                        // For the editor, we want to remove its interaction container
+                        if (selector === '[contenteditable="true"]') {
+                            const area = el.closest('.relative.flex.flex-col.gap-8') || 
+                                         el.closest('.flex.grow.flex-col.justify-start.gap-8') ||
+                                         el.closest('div[id^="interaction"]') ||
+                                         el.parentElement?.parentElement;
+                            if (area && area !== clone) area.remove();
+                            else el.remove();
+                        } else {
+                            el.remove();
+                        }
+                    } catch(e) {}
+                });
+            });
+
+            // 2. Text-based cleanup for stray status bars
+            const allElements = clone.querySelectorAll('*');
+            allElements.forEach(el => {
+                try {
+                    const text = (el.innerText || '').toLowerCase();
+                    if (text.includes('review changes') || text.includes('files with changes') || text.includes('context found')) {
+                        // If it's a small structural element or has buttons, it's likely a bar
+                        if (el.children.length < 10 || el.querySelector('button') || el.classList?.contains('justify-between')) {
+                            el.style.display = 'none'; // Use both hide and remove
+                            el.remove();
+                        }
+                    }
+                } catch (e) {}
+            });
+        } catch (globalErr) { }
         
         const html = clone.outerHTML;
         
